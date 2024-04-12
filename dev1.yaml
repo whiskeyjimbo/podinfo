@@ -1,0 +1,7 @@
+apiVersion: cluster.whiskeyjimbo.io/v1alpha1
+kind: VirtualArgoCD
+metadata:
+  name: devcluster1 
+spec:
+  argocd:
+    values: {}
