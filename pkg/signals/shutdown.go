@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	smtpmock "github.com/mocktools/go-smtp-mock/v2"
 	"github.com/spf13/viper"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.uber.org/zap"
@@ -29,7 +30,7 @@ func NewShutdown(serverShutdownTimeout time.Duration, logger *zap.Logger) (*Shut
 	return srv, nil
 }
 
-func (s *Shutdown) Graceful(stopCh <-chan struct{}, httpServer *http.Server, httpsServer *http.Server, grpcServer *grpc.Server, healthy *int32, ready *int32) {
+func (s *Shutdown) Graceful(stopCh <-chan struct{}, httpServer *http.Server, httpsServer *http.Server, grpcServer *grpc.Server, smtpServer *smtpmock.Server, healthy *int32, ready *int32) {
 	ctx := context.Background()
 
 	// wait for SIGTERM or SIGINT
@@ -53,6 +54,12 @@ func (s *Shutdown) Graceful(stopCh <-chan struct{}, httpServer *http.Server, htt
 	// the readiness check interval must be lower than the timeout
 	if viper.GetString("level") != "debug" {
 		time.Sleep(3 * time.Second)
+	}
+	// determine if the SMTP server was started and if so purge messages and stop the server
+	if smtpServer != nil {
+		s.logger.Info("Shutting down SMTP server", zap.Duration("timeout", s.serverShutdownTimeout))
+		smtpServer.MessagesAndPurge()
+		smtpServer.Stop()
 	}
 
 	// stop OpenTelemetry tracer provider

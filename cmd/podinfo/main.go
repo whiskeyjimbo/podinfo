@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	smtpmock "github.com/mocktools/go-smtp-mock/v2"
 	"github.com/stefanprodan/podinfo/pkg/api/grpc"
 	"github.com/stefanprodan/podinfo/pkg/api/http"
 	"github.com/stefanprodan/podinfo/pkg/signals"
@@ -28,6 +29,7 @@ func main() {
 	fs.Int("secure-port", 0, "HTTPS port")
 	fs.Int("port-metrics", 0, "metrics port")
 	fs.Int("grpc-port", 0, "gRPC port")
+	fs.Int("smtp-port", 0, "SMTP port")
 	fs.String("grpc-service-name", "podinfo", "gPRC service name")
 	fs.String("level", "info", "log level debug, info, warn, error, fatal or panic")
 	fs.StringSlice("backend-url", []string{}, "backend service URL")
@@ -51,6 +53,7 @@ func main() {
 	fs.Bool("unhealthy", false, "when set, healthy state is never reached")
 	fs.Bool("unready", false, "when set, ready state is never reached")
 	fs.Int("stress-cpu", 0, "number of CPU cores with 100 load")
+	fs.Int("stress-cpu-time", 0, "time cycle for CPU stress in seconds")
 	fs.Int("stress-memory", 0, "MB of data to load into memory")
 	fs.String("cache-server", "", "Redis address in the format 'tcp://<host>:<port>'")
 	fs.String("otel-service-name", "", "service name for reporting to open telemetry address, when not set tracing is disabled")
@@ -100,7 +103,7 @@ func main() {
 	defer stdLog()
 
 	// start stress tests if any
-	beginStressTest(viper.GetInt("stress-cpu"), viper.GetInt("stress-memory"), logger)
+	beginStressTest(viper.GetInt("stress-cpu"), viper.GetInt("stress-memory"), viper.GetInt("stress-cpu-time"), logger)
 
 	// validate port
 	if _, err := strconv.Atoi(viper.GetString("port")); err != nil {
@@ -156,6 +159,16 @@ func main() {
 		zap.String("port", srvCfg.Port),
 	)
 
+	// start mock SMTP server
+	var smtpServer *smtpmock.Server
+	if srvCfg.SmtpPort > 0 {
+		logger.Info("Starting MOCK-SMTP Server.", zap.String("addr", ":"+strconv.Itoa(srvCfg.SmtpPort)))
+		smtpServer = smtpmock.New(smtpmock.ConfigurationAttr{
+			PortNumber: srvCfg.SmtpPort,
+		})
+		smtpServer.Start()
+	}
+
 	// start HTTP server
 	srv, _ := http.NewServer(&srvCfg, logger)
 	httpServer, httpsServer, healthy, ready := srv.ListenAndServe()
@@ -163,7 +176,7 @@ func main() {
 	// graceful shutdown
 	stopCh := signals.SetupSignalHandler()
 	sd, _ := signals.NewShutdown(srvCfg.ServerShutdownTimeout, logger)
-	sd.Graceful(stopCh, httpServer, httpsServer, grpcServer, healthy, ready)
+	sd.Graceful(stopCh, httpServer, httpsServer, grpcServer, smtpServer, healthy, ready)
 }
 
 func initZap(logLevel string) (*zap.Logger, error) {
@@ -215,22 +228,44 @@ func initZap(logLevel string) (*zap.Logger, error) {
 
 var stressMemoryPayload []byte
 
-func beginStressTest(cpus int, mem int, logger *zap.Logger) {
+func beginStressTest(cpus, mem, cpuTime int, logger *zap.Logger) {
+	ticker := time.NewTicker(time.Second)
+	if cpuTime > 0 {
+		ticker = time.NewTicker(time.Duration(cpuTime) * time.Second)
+	}
+
 	done := make(chan int)
 	if cpus > 0 {
-		logger.Info("starting CPU stress", zap.Int("cores", cpus))
-		for i := 0; i < cpus; i++ {
-			go func() {
-				for {
-					select {
-					case <-done:
-						return
-					default:
-
-					}
+		logger.Info("starting CPU stress", zap.Int("cores", cpus), zap.Duration("interval-seconds", time.Duration(cpuTime)*time.Second))
+		go func() {
+			for {
+				for i := 1; i <= cpus; i++ {
+					<-ticker.C
+					go func() {
+						for {
+							select {
+							case <-done:
+								return
+							default:
+							}
+						}
+					}()
 				}
-			}()
-		}
+
+				if cpuTime <= 0 {
+					break
+				}
+
+				for i := 0; i < int(time.Duration(cpuTime)*time.Second/time.Second); i++ {
+					<-ticker.C
+				}
+
+				for i := cpus; i > 0; i-- {
+					<-ticker.C
+					done <- 1
+				}
+			}
+		}()
 	}
 
 	if mem > 0 {

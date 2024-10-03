@@ -59,6 +59,7 @@ type Config struct {
 	Host                  string        `mapstructure:"host"`
 	Port                  string        `mapstructure:"port"`
 	SecurePort            string        `mapstructure:"secure-port"`
+	SmtpPort              int           `mapstructure:"smtp-port"`
 	PortMetrics           int           `mapstructure:"port-metrics"`
 	Hostname              string        `mapstructure:"hostname"`
 	H2C                   bool          `mapstructure:"h2c"`
