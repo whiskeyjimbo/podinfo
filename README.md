@@ -1,3 +1,6 @@
+# fork notes:
+adds optional time component to cpu stress test and a mock smtp server
+
 # podinfo
 
 [![e2e](https://github.com/stefanprodan/podinfo/workflows/e2e/badge.svg)](https://github.com/stefanprodan/podinfo/blob/master/.github/workflows/e2e.yml)
